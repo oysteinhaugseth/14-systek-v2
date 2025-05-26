@@ -1,32 +1,31 @@
 let font;
-let svg;
 let img;
 let fontsize = 60;
 let strokeweight = 2;
 let pills = [];
-// the offset of the line to the corner of the pill in pixels
-let offset = fontsize / 10;
+let ctx;
 let texts = ["mellom", "folk", "og", "teknologi"];
 let currentTextIndex = 0;
 let mouseStartX = 0;
 let mouseStartY = 0;
 let isDragging = false;
-let cornerRadius = 4; // Added corner radius variable
+let cornerRadius = 4;
+let fadeInSpeed = 0.1;
+let maxPillDistance = 400;
+let cornerOffset = -2; // Global variable for line connection offset
 
 // Add timing variables
 let startTime;
 let initialPillsCreated = 0;
 let lastPillTime = 0;
-const PILL_DELAY = 1000; // 1 second delay between pills
+const PILL_DELAY = 1000;
 
 function preload() {
   font = loadFont("assets/fonts/KHTeka/WOFF/KHTeka-Light.woff");
-  svg = loadSVG("assets/svg/logo.svg");
   img = loadImage("assets/image/img.png");
 }
 
 class Pill {
-  // Static property that applies to all instances
   static textOffsetY = -(fontsize / 7);
 
   constructor(text, x, y, options = {}) {
@@ -39,24 +38,27 @@ class Pill {
     this.isDragging = false;
     this.dragOffsetX = 0;
     this.dragOffsetY = 0;
-    this.isSvg = false;
     this.isImage = false;
     this.hasBeenClicked = false;
     this.isActive = false;
     this.hasBeenRendered = false;
-    this.isInitialPill = false; // Track if this is one of the initial pills
-    this.opacity = 0; // Start with 0 opacity
-    this.fadeInSpeed = 0.05; // Speed of fade in animation
+    this.isInitialPill = false;
+    this.opacity = 0;
+    this.fadeInSpeed = fadeInSpeed;
+    this.repulsionForce = 500;
+    this.repulsionDecay = 0.99;
+    this.velocityX = 0;
+    this.velocityY = 0;
+    this.velocityDecay = 0.95;
+    this.lastX = x;
+    this.lastY = y;
     this.recalculate();
   }
 
   recalculate() {
-    if (this.isSvg) {
-      this.width = 182 + 24; // SVG width
-      this.height = 44 + 24; // SVG height
-    } else if (this.isImage) {
-      this.width = 300; // Image width (doubled from 150)
-      this.height = 360; // Image height (doubled from 180)
+    if (this.isImage) {
+      this.width = 300;
+      this.height = 360;
     } else {
       this.textW = textWidth(this.text);
       this.width = this.textW + this.padding * 2;
@@ -68,18 +70,12 @@ class Pill {
     if (this.text === "folk") {
       if (this.hasBeenClicked) {
         this.isImage = !this.isImage;
-        this.isSvg = false;
       }
       this.hasBeenClicked = true;
-    } else if (this.text === "Vi") {
-      this.isSvg = !this.isSvg;
-      this.isImage = false;
     } else {
-      // For initial pills, change color immediately
       if (this.isInitialPill) {
         this.isActive = !this.isActive;
       } else {
-        // For dynamically added pills, wait for render
         if (this.hasBeenRendered) {
           this.isActive = !this.isActive;
         }
@@ -106,31 +102,67 @@ class Pill {
 
   drag(x, y) {
     if (this.isDragging) {
+      // Store last position before updating
+      this.lastX = this.x;
+      this.lastY = this.y;
+
+      // Update position
       this.x = x + this.dragOffsetX;
       this.y = y + this.dragOffsetY;
+
+      // Calculate velocity based on the difference between current and last position
+      this.velocityX = (this.x - this.lastX) * 0.5;
+      this.velocityY = (this.y - this.lastY) * 0.5;
     }
   }
 
-  stopDrag() {
-    this.isDragging = false;
-  }
-
-  display() {
-    // Update opacity for fade in
+  update() {
     if (this.opacity < 1) {
       this.opacity += this.fadeInSpeed;
     }
 
-    if (!this.isSvg && !this.isImage) {
+    // Apply velocity with repulsion-like behavior
+    if (!this.isDragging) {
+      this.x += this.velocityX;
+      this.y += this.velocityY;
+
+      // Decay velocity more like repulsion
+      this.velocityX *= this.repulsionDecay;
+      this.velocityY *= this.repulsionDecay;
+    }
+
+    if (this.repulsionForce > 0) {
+      this.repulsionForce *= this.repulsionDecay;
+    }
+  }
+
+  applyRepulsion(otherPill) {
+    const dx = otherPill.x - this.x;
+    const dy = otherPill.y - this.y;
+    const distance = sqrt(dx * dx + dy * dy);
+
+    if (distance > 0) {
+      const force = this.repulsionForce / (distance * distance * 0.01);
+      const angle = atan2(dy, dx);
+      otherPill.x += cos(angle) * force;
+      otherPill.y += sin(angle) * force;
+    }
+  }
+
+  display() {
+    if (this.opacity < 1) {
+      this.opacity += this.fadeInSpeed;
+    }
+
+    if (!this.isImage) {
       noStroke();
-      // Change fill color based on active state and if it has been rendered
       if (
         (this.isActive && this.hasBeenRendered) ||
         (this.isActive && this.isInitialPill)
       ) {
-        fill(255, 210, 76, this.opacity * 255); // Yellow color when active
+        fill(255, 210, 76, this.opacity * 255);
       } else {
-        fill(255, 255, 255, this.opacity * 255); // Inactive color or not yet rendered
+        fill(255, 255, 255, this.opacity * 255);
       }
       strokeWeight(strokeweight);
       rectMode(CORNER);
@@ -143,11 +175,7 @@ class Pill {
       );
     }
 
-    if (this.isSvg) {
-      tint(255, this.opacity * 255);
-      image(svg, this.x - this.width / 2, this.y - this.height / 2, 182, 44);
-      noTint();
-    } else if (this.isImage) {
+    if (this.isImage) {
       tint(255, this.opacity * 255);
       image(img, this.x - this.width / 2, this.y - this.height / 2, 300, 360);
       noTint();
@@ -156,20 +184,99 @@ class Pill {
       text(this.text, this.x, this.y + Pill.textOffsetY);
     }
   }
+
+  stopDrag() {
+    if (this.isDragging) {
+      this.isDragging = false;
+      this.repulsionForce = 1000;
+    }
+  }
 }
 
 function setup() {
-  createCanvas(windowWidth, windowHeight, SVG);
+  let renderer = createCanvas(windowWidth, windowHeight);
+  ctx = renderer.drawingContext;
   textFont(font);
   textSize(fontsize);
   textAlign(CENTER, CENTER);
   startTime = millis();
 }
 
-function draw() {
-  background(252, 246, 238);
+// Add function to check if two line segments intersect
+function linesIntersect(x1, y1, x2, y2, x3, y3, x4, y4) {
+  const denominator = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+  if (denominator === 0) return false;
 
-  // Create initial pills with delay
+  const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denominator;
+  const ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denominator;
+
+  return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
+}
+
+// Add function to adjust line endpoints to avoid crossings
+function adjustLineEndpoints(pill1, pill2, otherPills) {
+  let startX, startY, endX, endY;
+
+  // Calculate start point with proper padding
+  if (pill1.isImage) {
+    startX = pill1.x + pill1.width / 2 - pill1.padding - 10;
+    startY = pill1.y + pill1.height / 2 - pill1.padding - 10;
+  } else {
+    startX = pill1.x + pill1.width / 2 - cornerOffset;
+    startY = pill1.y + pill1.height / 2 - cornerOffset;
+  }
+
+  // Calculate end point with proper padding
+  endX = pill2.x - pill2.width / 2 + cornerOffset;
+  endY = pill2.y - pill2.height / 2 + cornerOffset;
+
+  // Check for intersections with other lines
+  for (let i = 0; i < otherPills.length - 1; i++) {
+    const p1 = otherPills[i];
+    const p2 = otherPills[i + 1];
+
+    let otherStartX, otherStartY;
+    if (p1.isImage) {
+      otherStartX = p1.x + p1.width / 2 - p1.padding - 10;
+      otherStartY = p1.y + p1.height / 2 - p1.padding - 10;
+    } else {
+      otherStartX = p1.x + p1.width / 2 - cornerOffset;
+      otherStartY = p1.y + p1.height / 2 - cornerOffset;
+    }
+
+    const otherEndX = p2.x - p2.width / 2 + cornerOffset;
+    const otherEndY = p2.y - p2.height / 2 + cornerOffset;
+
+    if (
+      linesIntersect(
+        startX,
+        startY,
+        endX,
+        endY,
+        otherStartX,
+        otherStartY,
+        otherEndX,
+        otherEndY
+      )
+    ) {
+      // Adjust the line by moving the endpoints slightly
+      const angle = atan2(endY - startY, endX - startX);
+      const offset = 10; // Amount to offset the line
+
+      // Move the line perpendicular to its direction
+      startX += cos(angle + PI / 2) * offset;
+      startY += sin(angle + PI / 2) * offset;
+      endX += cos(angle + PI / 2) * offset;
+      endY += sin(angle + PI / 2) * offset;
+    }
+  }
+
+  return { startX, startY, endX, endY };
+}
+
+function draw() {
+  background(241, 234, 224);
+
   if (initialPillsCreated < 3) {
     let currentTime = millis();
     if (currentTime - lastPillTime >= PILL_DELAY) {
@@ -182,49 +289,38 @@ function draw() {
     }
   }
 
-  // Draw connecting strokes between pills first (so pills appear on top)
+  for (let pill of pills) {
+    pill.update();
+  }
+
+  for (let i = 0; i < pills.length; i++) {
+    for (let j = i + 1; j < pills.length; j++) {
+      pills[i].applyRepulsion(pills[j]);
+      pills[j].applyRepulsion(pills[i]);
+    }
+  }
+
   if (pills.length > 1) {
-    // Draw lines from bottom right of each pill to top left of next pill
     stroke(151, 210, 236);
     strokeWeight(strokeweight);
+
+    // Draw lines with adjusted endpoints to avoid crossings
     for (let i = 0; i < pills.length - 1; i++) {
-      // Calculate bottom right corner of current pill
-      let pill1 = pills[i];
-      let pill2 = pills[i + 1];
+      const pill1 = pills[i];
+      const pill2 = pills[i + 1];
+      const otherPills = pills.filter(
+        (_, index) => index !== i && index !== i + 1
+      );
 
-      let startX, startY, endX, endY;
-
-      // Adjust connection points based on whether first pill is showing SVG or image
-      if (i === 0) {
-        if (pill1.isSvg) {
-          // For SVG, connect from the bottom right of the SVG area
-          startX = pill1.x + pill1.width / 2 - pill1.padding - 6;
-          startY = pill1.y + pill1.height / 2 - pill1.padding - 6;
-        } else if (pill1.isImage) {
-          // For image, connect from the bottom right of the image area
-          startX = pill1.x + pill1.width / 2 - pill1.padding - 10;
-          startY = pill1.y + pill1.height / 2 - pill1.padding - 10;
-        } else {
-          // For text pills, use the original corner connection
-          startX = offset + pill1.x + pill1.width / 2 - pill1.cornerRadius / 2;
-          startY = offset + pill1.y + pill1.height / 2 - pill1.cornerRadius / 2;
-        }
-      } else {
-        // For other pills, use the original corner connection
-        startX = offset + pill1.x + pill1.width / 2 - pill1.cornerRadius / 2;
-        startY = offset + pill1.y + pill1.height / 2 - pill1.cornerRadius / 2;
-      }
-
-      // Top left of next pill (consider the corner radius)
-      endX = pill2.x - pill2.width / 2 + pill2.cornerRadius / 2 - offset;
-      endY = pill2.y - pill2.height / 2 + pill2.cornerRadius / 2 - offset;
-
-      // Draw the connecting line
+      const { startX, startY, endX, endY } = adjustLineEndpoints(
+        pill1,
+        pill2,
+        otherPills
+      );
       line(startX, startY, endX, endY);
     }
   }
 
-  // Display all pills on top of the connections
   for (let pill of pills) {
     pill.display();
   }
@@ -233,40 +329,158 @@ function draw() {
 function createInitialPill() {
   const initialTexts = ["Vi", "bygger", "broer"];
   const text = initialTexts[initialPillsCreated];
+  const tempPill = new Pill(text, 0, 0);
+  const pillPadding = 20;
 
-  // Try to find a non-overlapping position
+  // Special placement for first three pills
+  if (initialPillsCreated < 3) {
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const baseDistance = 200; // Base distance from center
+
+    if (pills.length === 0) {
+      // First pill: place near center
+      const angle = random(TWO_PI);
+      const distance = random(50, 100);
+      const x = centerX + cos(angle) * distance;
+      const y = centerY + sin(angle) * distance;
+
+      let newPill = new Pill(text, x, y);
+      newPill.isInitialPill = true;
+      newPill.repulsionForce = 1000;
+      return newPill;
+    } else if (pills.length === 1) {
+      // Second pill: place in a different quadrant
+      const firstPill = pills[0];
+      const angle =
+        atan2(firstPill.y - centerY, firstPill.x - centerX) +
+        PI +
+        random(-PI / 4, PI / 4);
+      const distance = baseDistance;
+      const x = centerX + cos(angle) * distance;
+      const y = centerY + sin(angle) * distance;
+
+      // Ensure within bounds
+      const finalX = constrain(
+        x,
+        tempPill.width / 2 + pillPadding,
+        width - tempPill.width / 2 - pillPadding
+      );
+      const finalY = constrain(
+        y,
+        tempPill.height / 2 + pillPadding,
+        height - tempPill.height / 2 - pillPadding
+      );
+
+      let newPill = new Pill(text, finalX, finalY);
+      newPill.isInitialPill = true;
+      newPill.repulsionForce = 1000;
+      return newPill;
+    } else if (pills.length === 2) {
+      // Third pill: place in the remaining space
+      const firstPill = pills[0];
+      const secondPill = pills[1];
+
+      // Calculate the angle between first and second pill
+      const angle1 = atan2(
+        secondPill.y - firstPill.y,
+        secondPill.x - firstPill.x
+      );
+
+      // Place third pill perpendicular to the line between first and second
+      const perpendicularAngle = angle1 + PI / 2 + random(-PI / 6, PI / 6);
+      const distance = baseDistance;
+
+      // Calculate position based on the midpoint of first two pills
+      const midX = (firstPill.x + secondPill.x) / 2;
+      const midY = (firstPill.y + secondPill.y) / 2;
+
+      const x = midX + cos(perpendicularAngle) * distance;
+      const y = midY + sin(perpendicularAngle) * distance;
+
+      // Ensure within bounds
+      const finalX = constrain(
+        x,
+        tempPill.width / 2 + pillPadding,
+        width - tempPill.width / 2 - pillPadding
+      );
+      const finalY = constrain(
+        y,
+        tempPill.height / 2 + pillPadding,
+        height - tempPill.height / 2 - pillPadding
+      );
+
+      let newPill = new Pill(text, finalX, finalY);
+      newPill.isInitialPill = true;
+      newPill.repulsionForce = 1000;
+      return newPill;
+    }
+  }
+
+  // For subsequent pills, use the existing random placement logic
   let attempts = 0;
-  const maxAttempts = 50;
+  const maxAttempts = 100;
 
   while (attempts < maxAttempts) {
-    // Generate random position with padding from edges
-    const padding = 100;
-    const x = random(padding, width - padding);
-    const y = random(padding, height - padding);
+    const minX = tempPill.width / 2 + pillPadding;
+    const maxX = width - tempPill.width / 2 - pillPadding;
+    const minY = tempPill.height / 2 + pillPadding;
+    const maxY = height - tempPill.height / 2 - pillPadding;
 
-    // Check if this position overlaps with existing pills
-    let overlaps = false;
+    const x = random(minX, maxX);
+    const y = random(minY, maxY);
+
+    let validPosition = true;
+    const lastPill = pills[pills.length - 1];
+
     for (let pill of pills) {
       const distance = dist(x, y, pill.x, pill.y);
-      if (distance < 150) {
-        // Minimum distance between pills
-        overlaps = true;
+      if (distance > maxPillDistance || distance < 100) {
+        validPosition = false;
         break;
       }
     }
 
-    if (!overlaps) {
+    if (validPosition) {
+      for (let pill of pills) {
+        if (lineIntersectsPill(lastPill.x, lastPill.y, x, y, pill)) {
+          validPosition = false;
+          break;
+        }
+      }
+    }
+
+    if (validPosition) {
       let newPill = new Pill(text, x, y);
       newPill.isInitialPill = true;
+      newPill.repulsionForce = 1000;
       return newPill;
     }
 
     attempts++;
   }
 
-  // If we couldn't find a non-overlapping position, place it in a default position
-  let newPill = new Pill(text, width / 2, height / 2);
+  // Fallback placement
+  const lastPill = pills[pills.length - 1];
+  const angle = random(TWO_PI);
+  const distance = random(100, maxPillDistance);
+  let x = lastPill.x + cos(angle) * distance;
+  let y = lastPill.y + sin(angle) * distance;
+
+  x = constrain(
+    x,
+    tempPill.width / 2 + pillPadding,
+    width - tempPill.width / 2 - pillPadding
+  );
+  y = constrain(
+    y,
+    tempPill.height / 2 + pillPadding,
+    height - tempPill.height / 2 - pillPadding
+  );
+
+  let newPill = new Pill(text, x, y);
   newPill.isInitialPill = true;
+  newPill.repulsionForce = 1000;
   return newPill;
 }
 
@@ -275,7 +489,6 @@ function mousePressed() {
   mouseStartY = mouseY;
   isDragging = false;
 
-  // Check if we're clicking on any existing pill
   for (let i = 0; i < pills.length; i++) {
     if (pills[i].contains(mouseX, mouseY)) {
       pills[i].startDrag(mouseX, mouseY);
@@ -283,7 +496,6 @@ function mousePressed() {
     }
   }
 
-  // If not clicking on a pill, add a new one if there are words left
   if (currentTextIndex < texts.length) {
     pills.push(new Pill(texts[currentTextIndex], mouseX, mouseY));
     currentTextIndex++;
@@ -291,12 +503,10 @@ function mousePressed() {
 }
 
 function mouseDragged() {
-  // Check if we've moved enough to consider this a drag
   if (dist(mouseStartX, mouseStartY, mouseX, mouseY) > 5) {
     isDragging = true;
   }
 
-  // Update position of any pill being dragged
   for (let pill of pills) {
     if (pill.isDragging) {
       pill.drag(mouseX, mouseY);
@@ -305,7 +515,6 @@ function mouseDragged() {
 }
 
 function mouseReleased() {
-  // If it wasn't a drag, handle it as a click
   if (!isDragging) {
     for (let i = 0; i < pills.length; i++) {
       if (pills[i].contains(mouseX, mouseY)) {
@@ -315,7 +524,7 @@ function mouseReleased() {
     }
   }
 
-  // Stop dragging all pills
+  // Stop dragging all pills and add repulsion
   for (let pill of pills) {
     pill.stopDrag();
   }
